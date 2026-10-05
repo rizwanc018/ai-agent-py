@@ -103,9 +103,6 @@ if final_response:
     final_response.answer
     final_response.source
 
-# --------------------------------------------------------------
-# Question that doesn't trigger the tool
-# --------------------------------------------------------------
 
 messages = [
     {"role": "system", "content": system_prompt},
