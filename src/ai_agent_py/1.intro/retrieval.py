@@ -1,38 +1,32 @@
 import json
 import os
-import requests
+from unittest import result
+
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from openai.types.chat import ChatCompletionMessageCustomToolCall, ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam
 from openai.types.chat import ChatCompletionToolParam
-from openai.types.chat import ChatCompletionMessageFunctionToolCall
-
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-def get_weather(latitude, longitude):
-    response = requests.get(
-        f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
-    )
-    data = response.json()
-    return data["current"]
+def search_kb(question: str):
+    with open("kb.json", "r") as f:
+        return json.load(f)
 
 
 tools: list[ChatCompletionToolParam] = [
-
     {
         "type": "function",
         "function": {
-            "name": "get_weather",
-            "description": "Get current temperature for provided coordinates in celsius.",
+            "name": "search_kb",
+            "description": "Get the answer to the user's question from the knowledge base.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "latitude": {"type": "number"},
-                    "longitude": {"type": "number"},
+                    "question": {"type": "string"},
                 },
-                "required": ["latitude", "longitude"],
+                "required": ["question"],
                 "additionalProperties": False,
             },
             "strict": True,
@@ -40,24 +34,20 @@ tools: list[ChatCompletionToolParam] = [
     }
 ]
 
-system_prompt = "You are a helpful weather assistant."
+system_prompt = "You are a helpful assistant that answers questions from the knowledge base about our e-commerce store."
 
 messages: list[ChatCompletionMessageParam] = [
     {"role": "system", "content": system_prompt},
-    {"role": "user", "content": "What's the weather like in Paris today?"},
+    {"role": "user", "content": "What is the return policy?"},
 ]
 
 completion = client.chat.completions.create(
     model="gpt-4o",
     messages=messages,
-    tools=tools
+    tools=tools,
 )
 
-
-def call_function(name, args):
-    if name == "get_weather":
-        return get_weather(**args)
-
+completion.model_dump()
 
 assistant_message = completion.choices[0].message
 
@@ -78,6 +68,12 @@ messages.append({
     ],
 })
 
+
+def call_function(name, args):
+    if name == "search_kb":
+        return search_kb(**args)
+
+
 for tool_call in completion.choices[0].message.tool_calls or []:
     if not isinstance(tool_call, ChatCompletionMessageFunctionToolCall):
         continue
@@ -90,25 +86,36 @@ for tool_call in completion.choices[0].message.tool_calls or []:
         {"role": "tool", "tool_call_id": tool_call.id,
             "content": json.dumps(result)}
     )
-
-
-class WeatherResponse(BaseModel):
-    temperature: float = Field(
-        description="The current temperature in celsius for the given location."
-    )
-    response: str = Field(
-        description="A natural language response to the user's question."
-    )
+class KBResponse(BaseModel):
+    answer: str = Field(description="The answer to the user's question.")
+    source: int = Field(description="The record id of the answer.")
 
 
 completion_2 = client.beta.chat.completions.parse(
     model="gpt-4o",
     messages=messages,
     tools=tools,
-    response_format=WeatherResponse,
+    response_format=KBResponse,
 )
 
 final_response = completion_2.choices[0].message.parsed
-if final_response: 
-    final_response.temperature
-    final_response.response
+if final_response:
+    final_response.answer
+    final_response.source
+
+# --------------------------------------------------------------
+# Question that doesn't trigger the tool
+# --------------------------------------------------------------
+
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": "What is the weather in Tokyo?"},
+]
+
+completion_3 = client.beta.chat.completions.parse(
+    model="gpt-4o",
+    messages=messages,
+    tools=tools,
+)
+
+completion_3.choices[0].message.content
